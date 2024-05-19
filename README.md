@@ -9,3 +9,9 @@ Split a PDF at a specified page.
 # compression
 PDFを圧縮する。
 Compress PDFs.
+
+# preparation
+```
+pip install pypdf2
+sudo apt install ghostscript
+```

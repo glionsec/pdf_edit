@@ -1,13 +1,13 @@
 # unlock
-PDFのパスワードを解除する。
+PDFのパスワードを解除する。\n
 Remove the PDF password.
 
 # split
-PDFを指定のページで分割する。
+PDFを指定のページで分割する。\n
 Split a PDF at a specified page.
 
 # compression
-PDFを圧縮する。
+PDFを圧縮する。\n
 Compress PDFs.
 
 # preparation

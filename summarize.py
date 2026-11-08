@@ -10,6 +10,7 @@
 要約文そのものの生成は LLM/エージェント側で行い、このスクリプトは決定的な抽出と結合のみを担う。
 """
 import argparse
+import base64
 import json
 import os
 import re
@@ -19,6 +20,8 @@ from datetime import datetime, timezone
 from html.parser import HTMLParser
 
 from pypdf import PdfReader
+
+import figures as figures_module
 
 # ---------------------------------------------------------------- 定数
 
@@ -671,6 +674,7 @@ def check(out_dir):
             problems.append(f"章 {chapter['index']:02d} の要約を読めません: {exc}")
             continue
         problems.extend(validate_fragment(fragment, f"章 {chapter['index']:02d}"))
+    problems.extend(figures_module.validate_figures(out_dir))
     diagrams = os.path.join(out_dir, "diagrams")
     if os.path.isdir(diagrams):
         for name in sorted(os.listdir(diagrams)):
@@ -722,14 +726,20 @@ LANGUAGE_LABELS = {"ja": "日本語", "en": "English"}
 def write_prompt(out_dir, language="ja"):
     language = LANGUAGE_LABELS.get(language, language)
     manifest = load_manifest(out_dir)
+    figures_data = figures_module.load_figures(out_dir) or {}
+    figure_pages = {}
+    for entry in figures_data.get("figures", []):
+        figure_pages.setdefault(entry.get("chapter"), []).append(entry.get("page"))
     chapters_dir = os.path.join(out_dir, "chapters")
     chapter_lines = []
     output_lines = []
     for chapter in manifest["chapters"]:
+        pages = figure_pages.get(chapter["index"], [])
+        figure_note = f" / 図版 {len(pages)} 枚（p.{', '.join(map(str, pages))}）" if pages else ""
         chapter_lines.append(
             f"- {chapter['index']:02d}: {chapter.get('file', '(file 未設定)')} "
             f"（p.{chapter['start']}-{chapter['end']}, "
-            f"{chapter.get('chars', '?')} 字, {chapter['title']}）"
+            f"{chapter.get('chars', '?')} 字, {chapter['title']}{figure_note}）"
         )
         output_lines.append(f"- {chapter['index']:02d}.html")
     prompt = PROMPT_TEMPLATE.format(
@@ -855,6 +865,27 @@ def assemble(out_dir):
         ) as handle:
             fragments[chapter["index"]] = handle.read().strip()
 
+    figures_by_chapter = {}
+    figures_data = figures_module.load_figures(out_dir) or {}
+    for entry in figures_data.get("figures", []):
+        path = os.path.join(out_dir, str(entry.get("file", "")))
+        if not os.path.isfile(path):
+            continue
+        with open(path, "rb") as handle:
+            payload = handle.read()
+        mime = "image/png" if entry.get("format") == "png" else "image/jpeg"
+        data_uri = f"data:{mime};base64,{base64.b64encode(payload).decode('ascii')}"
+        figure_html = (
+            f'  <figure>\n    <img src="{data_uri}" '
+            f'alt="p.{entry["page"]} の図" loading="lazy">\n'
+            f'    <figcaption>p.{entry["page"]} の図（{entry["width"]}×{entry["height"]}）</figcaption>\n'
+            f'  </figure>\n'
+        )
+        figures_by_chapter.setdefault(entry.get("chapter"), []).append(figure_html)
+
+    def chapter_figures(index):
+        return "".join(figures_by_chapter.get(index, []))
+
     diagrams_dir = os.path.join(out_dir, "diagrams")
     overview_svgs = []
     if os.path.isdir(diagrams_dir):
@@ -877,7 +908,7 @@ def assemble(out_dir):
         figures = "\n".join(figure(svg, "全体像") for svg in overview_svgs)
         sections.append(
             f'  <section id="overview">\n    <h2>全体像</h2>\n'
-            f"    {fragments[0]}\n{figures}  </section>\n"
+            f"    {fragments[0]}\n{chapter_figures(0)}{figures}  </section>\n"
         )
 
     for chapter in chapters:
@@ -898,7 +929,7 @@ def assemble(out_dir):
             f'  <section id="{anchor}">\n'
             f'    <h2>{index}. {_escape(chapter["title"])}'
             f' <span class="pages">p.{chapter["start"]}–{chapter["end"]}</span></h2>\n'
-            f"    {fragments[index]}\n{extra}  </section>\n"
+            f"    {fragments[index]}\n{chapter_figures(index)}{extra}  </section>\n"
         )
 
     html = HTML_HEAD.format(
@@ -923,6 +954,10 @@ def assemble(out_dir):
 
 def validate_final_html(html):
     problems = []
+    for match in re.finditer(r'src\s*=\s*"([^"]*)"', html):
+        value = match.group(1)
+        if not re.fullmatch(r"data:image/(png|jpeg);base64,[A-Za-z0-9+/=]+", value):
+            problems.append("画像 src が data:image(png/jpeg) ではありません")
     if re.search(r"<script", html, re.I):
         problems.append("script タグが含まれています")
     if re.search(r"\son[a-z]+\s*=", html, re.I):
@@ -957,6 +992,13 @@ def main(argv=None):
 
     check_parser = sub.add_parser("check", help="要約断片と図解を検証")
     check_parser.add_argument("dir", help="extract の出力ディレクトリ")
+
+    figures_parser = sub.add_parser("figures", help="図版を抽出して figures/ に保存")
+    figures_parser.add_argument("pdf", help="入力 PDF")
+    figures_parser.add_argument("dir", help="extract の出力ディレクトリ")
+    figures_parser.add_argument("--per-chapter", type=int, default=2)
+    figures_parser.add_argument("--max-total-mb", type=float, default=5.0)
+    figures_parser.add_argument("--force", action="store_true")
 
     assemble_parser = sub.add_parser("assemble", help="単一 HTML に結合")
     assemble_parser.add_argument("dir", help="extract の出力ディレクトリ")
@@ -993,6 +1035,21 @@ def main(argv=None):
                     f"  {chapter['index']:02d} p.{chapter['start']:>3}-{chapter['end']:<3} "
                     f"{chapter['chars']:>6}字 {chapter['title'][:50]}"
                 )
+        elif args.command == "figures":
+            target = os.path.join(args.dir, "figures.json")
+            if os.path.exists(target) and not args.force:
+                raise ExtractError("figures.json が既にあります（--force で再抽出）")
+            result = figures_module.extract_figures(
+                args.pdf,
+                args.dir,
+                per_chapter=args.per_chapter,
+                max_total_bytes=int(args.max_total_mb * 1024 * 1024),
+            )
+            stats = result["stats"]
+            print(
+                f"図版 {stats['selected']} 枚 / {stats['bytes']/1e6:.1f}MB を抽出"
+                f"（候補 {stats['candidates']} 枚） -> {os.path.join(args.dir, 'figures')}"
+            )
         elif args.command == "prompt":
             path = write_prompt(args.dir, args.language)
             print(f"指示文を書き出しました: {path}")

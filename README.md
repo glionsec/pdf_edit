@@ -89,6 +89,7 @@ PDF の内容を章単位で要約した **単一 HTML（図解付き）** を�
 
 ```
 uv run python summarize.py extract "work/book.pdf"                 # 章検出 + 本文抽出
+uv run python summarize.py figures "work/book.pdf" work/summary/<PDF名>/   # 図版を抽出
 uv run python summarize.py prompt work/summary/<PDF名>/            # LLM への指示文 PROMPT.md
 uv run python summarize.py check  work/summary/<PDF名>/            # 書式・安全性の検証
 uv run python summarize.py assemble work/summary/<PDF名>/          # -> <PDF名>_summary.html
@@ -113,6 +114,8 @@ work/summary/<PDF名>/
 ├── chapters/         # 章ごとの本文テキスト
 ├── summaries/        # 章ごとの要約 HTML 断片（NN.html。LLM/エージェントが作成）
 ├── diagrams/         # インライン SVG 図解（overview-*.svg, ch-NN.svg）
+├── figures/          # PDF から抽出した図版（JPEG/PNG）
+├── figures.json      # 図版一覧（章・ページ・サイズ・形式）
 └── <名前>_summary.html
 ```
 
@@ -120,6 +123,12 @@ work/summary/<PDF名>/
   SVG の危険要素（script / image / on* / 外部 URL）を検証する
 - `assemble` は検証を通らない断片を拒否し、生成した HTML に対しても script / on* / 外部参照を再検査する
 - テキストを抽出できない PDF（スキャン画像）はエラーになる。OCR 済みの PDF か `--chapters` を使う
+- `figures` は Form XObject の中も含めて画像を探し、サイズ・縦横比・テンプレート部品（同寸法の多用）・
+  同一画像の使い回しで装飾を除外する。章あたり 2 枚・合計 5MB を上限に選抜（`--per-chapter` / `--max-total-mb`）
+- JPEG はそのまま、FlateDecode の RGB/グレースケールは PNG に変換して抽出する
+- `assemble` は `figures.json` があれば **base64 の data URI で HTML に埋め込む**（単一 HTML を維持）。
+  画像以外の data URI は拒否する
+- 図の内容理解（OCR・画像の意味解析）は行わない。画像内の文字は抽出されない
 - 要約文は LLM 生成のため非決定的。抽出・検証・結合は決定的でテスト対象
 
 # 実 PDF の作業用ディレクトリ

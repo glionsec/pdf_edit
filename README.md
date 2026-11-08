@@ -57,6 +57,27 @@ docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/data" pdf-edit-compress inp
 
 Compress a PDF with ghostscript.
 
+# 実 PDF の作業用ディレクトリ
+
+実データの PDF は `work/` に置く（`.gitkeep` 以外は gitignore 済みでコミットされない）。
+`work/` の中に好きなサブディレクトリを作ってよい。
+
+```
+mkdir -p work/in work/out
+cp ~/Downloads/sample.pdf work/in/
+uv run python unlock.py work/in/sample.pdf --password PW --force
+uv run python merge.py work/in work/out/merged.pdf
+uv run python split.py work/in/sample.pdf 2
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/data" pdf-edit-compress work/in/sample.pdf work/out/sample.pdf /ebook
+```
+
+`work/` をカレントにして実行する場合は、プロジェクトを明示する。
+
+```
+cd work
+uv run --project .. python ../unlock.py --password PW --force   # work/ 直下の PDF を処理
+```
+
 # development
 
 ```

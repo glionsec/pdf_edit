@@ -2,3 +2,7 @@
 __pycache__/
 *.pyc
 *.pdf
+
+# 実 PDF の作業用ディレクトリ（.gitkeep 以外はコミットしない）
+/work/*
+!/work/.gitkeep

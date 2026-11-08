@@ -35,8 +35,8 @@ def unlock_pdfs(files=None, password=None, force=False):
                     continue
 
             pdf_writer = PdfWriter()
-            for page in pdf_reader.pages:
-                pdf_writer.add_page(page)
+            # ページをコピーするのではなく文書ごと複製し、しおりやメタデータも保持する
+            pdf_writer.clone_document_from_reader(pdf_reader)
             with open(output_file, "wb") as output_pdf:
                 pdf_writer.write(output_pdf)
             print(f"処理完了: {output_file}")

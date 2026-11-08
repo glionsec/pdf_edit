@@ -18,10 +18,12 @@ def make_pdf(path, pages=2, base_width=595):
     return path
 
 
-def make_encrypted_pdf(path, password="secret", pages=2):
+def make_encrypted_pdf(path, password="secret", pages=2, outline=False):
     writer = PdfWriter()
     for _ in range(pages):
         writer.add_blank_page(width=595, height=842)
+    if outline:
+        writer.add_outline_item("Chapter 1", 0)
     writer.encrypt(password, algorithm="AES-256")
     with open(path, "wb") as writer_file:
         writer.write(writer_file)
@@ -90,6 +92,17 @@ def test_unlock_decrypts_aes(tmp_path):
     reader = PdfReader(output)
     assert len(reader.pages) == 2
     assert not reader.is_encrypted
+
+
+def test_unlock_preserves_outline_and_pages(tmp_path):
+    pdf = make_encrypted_pdf(tmp_path / "enc_outline.pdf", outline=True)
+    output = tmp_path / "enc_outline_ja.pdf"
+
+    assert unlock.main([str(pdf), "--password", "secret", "--force"]) == 0
+    reader = PdfReader(output)
+    assert len(reader.pages) == 2
+    assert not reader.is_encrypted
+    assert len(reader.outline) == 1
 
 
 def test_unlock_reports_wrong_password(tmp_path, capsys):

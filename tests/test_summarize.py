@@ -357,7 +357,7 @@ def test_check_rejects_external_svg_asset(tmp_path):
     out_dir = _make_out_dir(tmp_path)
     (out_dir / "diagrams" / "ch-01.svg").write_text(bad_svg, encoding="utf-8")
     problems = summarize.check(str(out_dir))
-    assert any("外部" in p for p in problems)
+    assert any("image" in p or "href" in p for p in problems)
 
 
 def test_check_rejects_invalid_manifest(tmp_path):
@@ -437,7 +437,7 @@ def test_svg_rejects_image_and_external_xlink(tmp_path):
     (out_dir / "diagrams" / "ch-01.svg").write_text(bad_svg, encoding="utf-8")
     problems = summarize.check(str(out_dir))
     assert any("image" in p for p in problems)
-    assert any("外部" in p for p in problems)
+    assert any("href" in p for p in problems)
 
 
 def test_safe_removal_rejects_directory_with_pdfs(tmp_path):
@@ -521,7 +521,7 @@ def test_svg_rejects_data_uri_reference(tmp_path):
     out_dir = _make_out_dir(tmp_path)
     (out_dir / "diagrams" / "ch-01.svg").write_text(bad_svg, encoding="utf-8")
     problems = summarize.check(str(out_dir))
-    assert any("data:" in p for p in problems)
+    assert any("data" in p or "href" in p for p in problems)
 
 
 def test_safe_removal_rejects_source_directory(tmp_path):
@@ -530,3 +530,164 @@ def test_safe_removal_rejects_source_directory(tmp_path):
     (target / "tool.py").write_text("print('x')")
     with pytest.raises(ExtractError):
         summarize._safe_removal_target(target)
+
+
+# ---------------------------------------------------------------- High 指摘の回帰テスト
+
+
+def test_manifest_rejects_unknown_strategy(tmp_path):
+    out_dir = _make_out_dir(tmp_path)
+    manifest = json.loads((out_dir / "manifest.json").read_text(encoding="utf-8"))
+    manifest["strategy"] = '</p><input/autofocus/onfocus="alert(1)">'
+    (out_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ExtractError):
+        summarize.load_manifest(str(out_dir))
+
+
+def test_manifest_requires_source(tmp_path):
+    out_dir = _make_out_dir(tmp_path)
+    manifest = json.loads((out_dir / "manifest.json").read_text(encoding="utf-8"))
+    manifest.pop("source")
+    (out_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ExtractError):
+        summarize.load_manifest(str(out_dir))
+
+
+def test_figures_json_page_must_be_int(tmp_path):
+    import figures
+
+    out_dir = _make_out_dir(tmp_path)
+    figures_json = {
+        "source": "work/test.pdf",
+        "stats": {},
+        "figures": [
+            {"chapter": 1, "page": '1" onload="alert(1)', "file": "figures/a.png",
+             "format": "png", "width": 10, "height": 10, "bytes": 10}
+        ],
+    }
+    (out_dir / "figures.json").write_text(json.dumps(figures_json), encoding="utf-8")
+    problems = figures.validate_figures(str(out_dir))
+    assert any("page" in p for p in problems)
+
+
+def test_figures_json_broken_is_reported_not_raised(tmp_path):
+    import figures
+
+    out_dir = _make_out_dir(tmp_path)
+    (out_dir / "figures.json").write_text("{", encoding="utf-8")
+    assert figures.validate_figures(str(out_dir))
+
+
+def test_final_html_rejects_no_space_handlers_and_protocol_relative():
+    bad = '<p><input/autofocus/onfocus="alert(1)"><a href="//host/x">x</a></p>'
+    problems = summarize.validate_final_html(bad)
+    assert any("禁止タグ" in p for p in problems)
+    assert any("イベント" in p for p in problems)
+    assert any("href" in p for p in problems)
+
+
+def test_final_html_rejects_comments():
+    problems = summarize.validate_final_html("<p>a</p><!-- unclosed")
+    assert any("コメント" in p for p in problems)
+
+
+def test_svg_style_import_and_protocol_relative_rejected(tmp_path):
+    bad = '<svg xmlns="http://www.w3.org/2000/svg"><style>@import url(//host/x.css);</style></svg>'
+    out_dir = _make_out_dir(tmp_path)
+    (out_dir / "diagrams" / "ch-01.svg").write_text(bad, encoding="utf-8")
+    assert any("style" in p or "外部" in p for p in summarize.check(str(out_dir)))
+
+
+def test_svg_internal_xlink_is_allowed():
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">'
+        '<defs><path id="r"/></defs><use xlink:href="#r"/></svg>'
+    )
+    assert summarize.validate_svg(svg, "ok") == []
+
+
+def test_safe_removal_detects_nested_uppercase_and_bracket_dirs(tmp_path):
+    nested = tmp_path / "out[1]" / "sub"
+    nested.mkdir(parents=True)
+    (nested / "SRC.PDF").write_bytes(b"%PDF-1.4")
+    with pytest.raises(ExtractError):
+        summarize._safe_removal_target(str(tmp_path / "out[1]"))
+
+
+def test_safe_removal_detects_git_file(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").write_text("gitdir: /elsewhere")
+    (repo / "work.txt").write_text("x")
+    with pytest.raises(ExtractError):
+        summarize._safe_removal_target(str(repo))
+
+
+def test_extract_rejects_symlink_out_dir(tmp_path):
+    pdf = tmp_path / "in.pdf"
+    _make_text_pdf(pdf, [f"page {i}" for i in range(1, 6)])
+    target = tmp_path / "target"
+    target.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(target)
+    with pytest.raises(ExtractError):
+        summarize.extract(str(pdf), str(link), {"force": True})
+
+
+def test_extract_rejects_pdf_inside_output_dir(tmp_path):
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    pdf = out_dir / "in.pdf"
+    _make_text_pdf(pdf, [f"page {i}" for i in range(1, 4)])
+    with pytest.raises(ExtractError):
+        summarize.extract(str(pdf), str(out_dir), {"force": True})
+
+
+def test_force_does_not_delete_output_before_pdf_validation(tmp_path):
+    writer = PdfWriter()
+    writer.add_blank_page(width=100, height=100)
+    writer.encrypt("secret")
+    pdf = tmp_path / "enc.pdf"
+    with open(pdf, "wb") as handle:
+        writer.write(handle)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    (out_dir / "previous.html").write_text("keep", encoding="utf-8")
+
+    with pytest.raises(ExtractError):
+        summarize.extract(str(pdf), str(out_dir), {"force": True})
+    assert (out_dir / "previous.html").exists()
+
+
+def test_extract_broken_pdf_is_extract_error(tmp_path):
+    pdf = tmp_path / "broken.pdf"
+    pdf.write_bytes(b"not a pdf")
+    with pytest.raises(ExtractError):
+        summarize.extract(str(pdf), str(tmp_path / "out"))
+
+
+def test_broken_manual_json_is_extract_error(tmp_path):
+    pdf = tmp_path / "in.pdf"
+    _make_text_pdf(pdf, [f"page {i}" for i in range(1, 5)])
+    bad = tmp_path / "chapters.json"
+    bad.write_text("{", encoding="utf-8")
+    with pytest.raises(ExtractError):
+        summarize.extract(str(pdf), str(tmp_path / "out"), {"manual": str(bad)})
+
+
+def test_many_outline_entries_are_kept_when_patterned():
+    texts = ["body"] * 40
+    reader = _StubReader(
+        texts, outline=[_StubItem(f"Chapter {i}", i * 1 + 1) for i in range(1, 36)]
+    )
+    detected = summarize.detect_chapters(reader, texts)
+    assert detected["strategy"] == "outline"
+    assert len(detected["chapters"]) == 35
+
+
+def test_explicit_offset_failure_is_error():
+    texts = _book_texts(12)
+    texts[0] = "TABLE OF CONTENTS\n1. First\n4. Second"
+    reader = _StubReader(texts, labels=["x"] * 12)
+    with pytest.raises(ExtractError):
+        summarize.detect_chapters(reader, texts, {"offset": 999})

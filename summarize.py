@@ -69,6 +69,11 @@ class ExtractError(ValueError):
     pass
 
 
+ALLOWED_STRATEGIES = {
+    "manual", "toc+labels", "toc+offset", "outline", "headings", "fixed", "toc", "unknown",
+}
+
+
 # ---------------------------------------------------------------- 共通
 
 
@@ -282,9 +287,8 @@ def outline_entries(reader, profile_name):
     if profile["outline_filter"] is not None:
         entries = [e for e in entries if profile["outline_filter"].match(e[1])]
     elif len(entries) > OUTLINE_MAX_WITHOUT_FILTER:
-        entries = [e for e in entries if OUTLINE_SECTION_PATTERN.match(e[1])]
-        if len(entries) > OUTLINE_MAX_WITHOUT_FILTER:
-            entries = []
+        filtered = [e for e in entries if OUTLINE_SECTION_PATTERN.match(e[1])]
+        entries = filtered if len(filtered) >= 2 else []
     return entries
 
 
@@ -307,8 +311,11 @@ def heading_entries(texts):
 
 
 def load_manual_chapters(path, total_pages):
-    with open(path, encoding="utf-8") as handle:
-        data = json.load(handle)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ExtractError(f"--chapters の JSON を読めません: {exc}") from exc
     raw = data.get("chapters", []) if isinstance(data, dict) else data
     if not isinstance(raw, list):
         raise ExtractError("--chapters の形式が不正です（配列を指定）")
@@ -344,6 +351,7 @@ def detect_chapters(reader, texts, options=None):
             "chapters": load_manual_chapters(manual_path, total),
             "strategy": "manual",
             "confidence": 1.0,
+            "low_text": sum(len(t) for t in texts) < 20,
         }
     if total == 0:
         raise ExtractError("ページがありません")
@@ -363,6 +371,7 @@ def detect_chapters(reader, texts, options=None):
             chapters = chapters_from_entries(shifted, total)
             if chapters:
                 return {"chapters": chapters, "strategy": "toc+offset", "confidence": 0.9}
+            raise ExtractError("--offset を適用できませんでした（章が 2 件未満になります）")
         else:
             chapters = map_entries_with_labels(entries, reader_page_labels(reader), total)
             if chapters:
@@ -394,7 +403,24 @@ def detect_chapters(reader, texts, options=None):
 # ---------------------------------------------------------------- extract
 
 
+def _walk_pdfs(directory):
+    try:
+        entries = list(os.scandir(directory))
+    except OSError:
+        return
+    for entry in entries:
+        try:
+            if entry.is_dir(follow_symlinks=False):
+                yield from _walk_pdfs(entry.path)
+            elif entry.name.lower().endswith(".pdf"):
+                yield entry.path
+        except OSError:
+            continue
+
+
 def _safe_removal_target(path):
+    if os.path.islink(path):
+        raise ExtractError(f"シンボリックリンクは削除対象にできません: {path}")
     real = os.path.realpath(path)
     cwd = os.path.realpath(os.getcwd())
     home = os.path.realpath(os.path.expanduser("~"))
@@ -402,17 +428,19 @@ def _safe_removal_target(path):
         raise ExtractError(f"削除対象として不適切なパスです: {path}")
     if cwd.startswith(real + os.sep):
         raise ExtractError(f"カレントディレクトリの親は削除できません: {path}")
-    if os.path.isdir(os.path.join(real, ".git")):
-        raise ExtractError(f"git リポジトリは削除できません: {path}")
-    import glob
-
-    if glob.glob(os.path.join(real, "*.pdf")):
-        raise ExtractError(f"PDF を含むディレクトリは削除できません: {path}")
-    if any(
-        glob.glob(os.path.join(real, pattern))
-        for pattern in ("*.py", "pyproject.toml", "README.md", ".gitignore")
+    if os.path.exists(os.path.join(real, ".git")) or (
+        os.path.isfile(os.path.join(real, "HEAD"))
+        and os.path.isdir(os.path.join(real, "objects"))
     ):
-        raise ExtractError(f"ソースファイルを含むディレクトリは削除できません: {path}")
+        raise ExtractError(f"git リポジトリは削除できません: {path}")
+    if next(_walk_pdfs(real), None) is not None:
+        raise ExtractError(f"PDF を含むディレクトリは削除できません: {path}")
+    for pattern in ("*.py", "pyproject.toml", "README.md", ".gitignore"):
+        if any(
+            entry.name == pattern or (pattern.startswith("*.") and entry.name.endswith(pattern[1:]))
+            for entry in os.scandir(real)
+        ):
+            raise ExtractError(f"ソースファイルを含むディレクトリは削除できません: {path}")
 
 
 def slugify(title):
@@ -424,18 +452,17 @@ def extract(pdf_path, out_dir, options=None, dry_run=False):
     options = options or {}
     if not os.path.isfile(pdf_path):
         raise ExtractError(f"ファイルが見つかりません: {pdf_path}")
-    if os.path.isdir(out_dir) and os.listdir(out_dir):
-        if dry_run:
-            pass
-        elif options.get("force"):
-            _safe_removal_target(out_dir)
-            import shutil
+    if os.path.islink(out_dir):
+        raise ExtractError(f"出力先がシンボリックリンクです: {out_dir}")
+    real_pdf = os.path.realpath(pdf_path)
+    real_out = os.path.realpath(out_dir)
+    if real_pdf == real_out or real_pdf.startswith(real_out + os.sep):
+        raise ExtractError("PDF が出力先ディレクトリの中にあります")
 
-            shutil.rmtree(out_dir)
-        else:
-            raise ExtractError(f"出力先が既に存在します（--force で上書き）: {out_dir}")
-
-    reader = PdfReader(pdf_path)
+    try:
+        reader = PdfReader(pdf_path)
+    except Exception as exc:  # pypdf の壊れた PDF 例外を明示エラーに
+        raise ExtractError(f"PDF を読めません: {exc}") from exc
     if getattr(reader, "is_encrypted", False):
         raise ExtractError(
             "暗号化された PDF です。先に unlock.py で解除した PDF を使ってください。"
@@ -447,6 +474,16 @@ def extract(pdf_path, out_dir, options=None, dry_run=False):
         raise ExtractError(
             f"章が多すぎます（{len(chapters)}）。--chapters で明示指定してください"
         )
+    if detected.get("low_text"):
+        print("警告: テキストがほとんど抽出できません（図や画像だけの PDF の可能性）")
+
+    if os.path.isdir(out_dir) and os.listdir(out_dir) and not dry_run:
+        if not options.get("force"):
+            raise ExtractError(f"出力先が既に存在します（--force で上書き）: {out_dir}")
+        _safe_removal_target(out_dir)
+        import shutil
+
+        shutil.rmtree(out_dir)
 
     if dry_run:
         print(
@@ -594,6 +631,11 @@ def validate_fragment(html, label):
     return problems
 
 
+SVG_STYLE_UNSAFE = re.compile(r"@import|url\s*\(|https?:|//|javascript:|expression\s*\(", re.I)
+ALLOWED_SVG_HREF = re.compile(r"#[A-Za-z0-9_-]+")
+ALLOWED_SVG_DATA = re.compile(r"data:image/(png|jpeg);base64,[A-Za-z0-9+/=]+")
+
+
 def validate_svg(svg, label):
     problems = []
     try:
@@ -604,18 +646,20 @@ def validate_svg(svg, label):
         tag = element.tag.split("}")[-1].lower()
         if tag in FORBIDDEN_SVG_TAGS:
             problems.append(f"{label}: SVG に <{tag}> が含まれています")
+        if tag == "style":
+            text = "".join(element.itertext())
+            if SVG_STYLE_UNSAFE.search(text):
+                problems.append(f"{label}: SVG の <style> に外部参照・url() が含まれています")
         for name, value in element.attrib.items():
             key = name.split("}")[-1].split(":")[-1].lower()
+            text = str(value).strip()
             if key.startswith("on"):
                 problems.append(f"{label}: SVG にイベントハンドラ {key} が含まれています")
-            if key in ("href", "src"):
-                value_text = str(value).strip()
-                if EXTERNAL_URL.search(value_text):
-                    problems.append(f"{label}: SVG に外部参照 {key} が含まれています")
-                elif value_text.lower().startswith("data:"):
-                    problems.append(f"{label}: SVG に data: 参照 {key} が含まれています")
-    if EXTERNAL_URL.search(svg.replace("http://www.w3.org/2000/svg", "")):
-        problems.append(f"{label}: SVG に外部 URL が含まれています")
+            elif key == "style" and SVG_STYLE_UNSAFE.search(text):
+                problems.append(f"{label}: SVG の style 属性に url() 等が含まれています")
+            elif key in ("href", "src"):
+                if not (ALLOWED_SVG_HREF.fullmatch(text) or ALLOWED_SVG_DATA.fullmatch(text)):
+                    problems.append(f"{label}: SVG の {key} が内部参照/data 画像ではありません")
     return problems
 
 
@@ -633,6 +677,13 @@ def load_manifest(out_dir):
             manifest = json.load(handle)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ExtractError(f"manifest.json を読めません: {exc}") from exc
+    source = manifest.get("source")
+    if not isinstance(source, str) or not source.strip():
+        raise ExtractError("manifest.json の source が不正です")
+    strategy = manifest.get("strategy", manifest.get("method", "unknown"))
+    if strategy not in ALLOWED_STRATEGIES:
+        raise ExtractError(f"manifest.json の strategy が不正です: {strategy!r}")
+    manifest["strategy"] = strategy
     pages = manifest.get("pages")
     chapters = manifest.get("chapters")
     if not isinstance(pages, int) or pages < 1 or not isinstance(chapters, list) or not chapters:
@@ -901,10 +952,13 @@ def assemble(out_dir, embed_figures=False):
             payload = handle.read()
         mime = "image/png" if entry.get("format") == "png" else "image/jpeg"
         data_uri = f"data:{mime};base64,{base64.b64encode(payload).decode('ascii')}"
+        page = _escape(str(int(entry["page"])))
+        width = _escape(str(int(entry["width"])))
+        height = _escape(str(int(entry["height"])))
         figure_html = (
             f'  <figure>\n    <img src="{data_uri}" '
-            f'alt="p.{entry["page"]} の図" loading="lazy">\n'
-            f'    <figcaption>p.{entry["page"]} の図（{entry["width"]}×{entry["height"]}）</figcaption>\n'
+            f'alt="p.{page} の図" loading="lazy">\n'
+            f'    <figcaption>p.{page} の図（{width}×{height}）</figcaption>\n'
             f'  </figure>\n'
         )
         figures_by_chapter.setdefault(entry.get("chapter"), []).append(figure_html)
@@ -963,7 +1017,7 @@ def assemble(out_dir, embed_figures=False):
         source=_escape(os.path.basename(manifest["source"])),
         pages=manifest["pages"],
         chapters=sum(1 for c in chapters if c["index"] > 0),
-        strategy=manifest.get("strategy", "unknown"),
+        strategy=_escape(str(manifest.get("strategy", "unknown"))),
         created=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         toc="\n".join(toc_lines),
     ) + "\n".join(sections) + HTML_TAIL
@@ -978,21 +1032,46 @@ def assemble(out_dir, embed_figures=False):
     return output_path
 
 
+FORBIDDEN_HTML_TAGS = {
+    "script", "iframe", "object", "embed", "form", "input", "textarea", "select",
+    "button", "video", "audio", "link", "base", "source",
+}
+ALLOWED_IMG_SRC = re.compile(r"data:image/(png|jpeg);base64,[A-Za-z0-9+/=]+")
+ALLOWED_ANCHOR = re.compile(r"#[A-Za-z0-9_-]+")
+
+
+class _FinalHTMLParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.problems = []
+
+    def handle_starttag(self, tag, attrs):
+        tag = tag.lower()
+        if tag in FORBIDDEN_HTML_TAGS:
+            self.problems.append(f"禁止タグが含まれています: <{tag}>")
+        for name, value in attrs:
+            key = name.lower()
+            text = (value or "").strip()
+            if key.startswith("on"):
+                self.problems.append(f"イベント属性が含まれています: {key}")
+            elif key == "style":
+                self.problems.append("style 属性が含まれています")
+            elif key == "src" and not ALLOWED_IMG_SRC.fullmatch(text):
+                self.problems.append("src が data:image(png/jpeg) ではありません")
+            elif key in ("href", "xlink:href") and not ALLOWED_ANCHOR.fullmatch(text):
+                self.problems.append(f"href が内部アンカーではありません: {text[:40]}")
+            elif key in ("action", "formaction", "poster", "background", "srcset"):
+                self.problems.append(f"危険な属性が含まれています: {key}")
+
+    def handle_comment(self, data):
+        self.problems.append("HTML コメントが含まれています")
+
+
 def validate_final_html(html):
-    problems = []
-    for match in re.finditer(r'src\s*=\s*"([^"]*)"', html):
-        value = match.group(1)
-        if not re.fullmatch(r"data:image/(png|jpeg);base64,[A-Za-z0-9+/=]+", value):
-            problems.append("画像 src が data:image(png/jpeg) ではありません")
-    if re.search(r"<script", html, re.I):
-        problems.append("script タグが含まれています")
-    if re.search(r"\son[a-z]+\s*=", html, re.I):
-        problems.append("イベントハンドラ属性が含まれています")
-    if re.search(
-        r"(?:src|href)\s*=\s*[\"']?\s*(?:https?|ftp|javascript):", html, re.I
-    ):
-        problems.append("外部参照（http/https/ftp/javascript）が含まれています")
-    return problems
+    parser = _FinalHTMLParser()
+    parser.feed(html)
+    parser.close()
+    return parser.problems
 
 
 # ---------------------------------------------------------------- CLI

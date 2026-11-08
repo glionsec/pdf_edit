@@ -266,14 +266,26 @@ def load_figures(out_dir):
     path = os.path.join(out_dir, "figures.json")
     if not os.path.isfile(path):
         return None
-    with open(path, encoding="utf-8") as handle:
-        return json.load(handle)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"figures.json を読めません: {exc}") from exc
+    if not isinstance(data, dict) or not isinstance(data.get("figures"), list):
+        raise ValueError("figures.json の形式が不正です")
+    for entry in data["figures"]:
+        if not isinstance(entry, dict):
+            raise ValueError("figures.json の要素が不正です")
+    return data
 
 
 def validate_figures(out_dir):
     """figures.json と実ファイルの整合性・安全性を検証する。"""
     problems = []
-    figures = load_figures(out_dir)
+    try:
+        figures = load_figures(out_dir)
+    except ValueError as exc:
+        return [str(exc)]
     if figures is None:
         return problems
     chapter_indexes = set()
@@ -282,6 +294,21 @@ def validate_figures(out_dir):
         with open(manifest_path, encoding="utf-8") as handle:
             chapter_indexes = {c["index"] for c in json.load(handle)["chapters"]}
     for entry in figures.get("figures", []):
+        if not isinstance(entry.get("chapter"), int):
+            problems.append(f"figures.json の chapter が不正です: {entry.get('chapter')!r}")
+            continue
+        if not isinstance(entry.get("page"), int) or entry["page"] < 1:
+            problems.append(f"figures.json の page が不正です: {entry.get('page')!r}")
+            continue
+        if not isinstance(entry.get("width"), int) or entry["width"] < 1:
+            problems.append(f"figures.json の width が不正です: {entry.get('width')!r}")
+            continue
+        if not isinstance(entry.get("height"), int) or entry["height"] < 1:
+            problems.append(f"figures.json の height が不正です: {entry.get('height')!r}")
+            continue
+        if not isinstance(entry.get("bytes"), int) or entry["bytes"] < 0:
+            problems.append(f"figures.json の bytes が不正です: {entry.get('bytes')!r}")
+            continue
         relative = str(entry.get("file", ""))
         if not relative or relative.startswith("/") or ".." in relative.split("/"):
             problems.append(f"figures.json の file が不正です: {relative!r}")
@@ -301,4 +328,6 @@ def validate_figures(out_dir):
         expected = b"\x89PNG\r\n\x1a\n" if extension == "png" else b"\xff\xd8\xff"
         if not head.startswith(expected):
             problems.append(f"図版の内容が形式と一致しません: {relative}")
+        elif os.path.getsize(path) != entry["bytes"]:
+            problems.append(f"図版のサイズが figures.json と一致しません: {relative}")
     return problems

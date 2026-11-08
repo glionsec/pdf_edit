@@ -64,9 +64,16 @@ Compress a PDF with ghostscript.
 （SANS 教材など）。テキスト描画命令（`Tj` / `TJ` / `'` / `"`）だけを落とし、
 画像・図形・本文はそのまま残す。
 
+標準で次のメタデータも削除する（`--keep-metadata` で無効化できる）。
+
+- 文書情報辞書（`/Info`）の全項目（Author / Title / Copyright / Hash / Hash2 など）
+- ファイル識別子（`/ID`）を新規生成（元ファイルとの紐付けを切る）
+- 各オブジェクトの `/PieceInfo` / `/LastModified` / `/Metadata`
+
 ```
-uv run python strip.py input.pdf                 # -> input_stripped.pdf
+uv run python strip.py input.pdf                 # -> input_stripped.pdf（メタデータも削除）
 uv run python strip.py input.pdf output.pdf
+uv run python strip.py input.pdf --keep-metadata # テキストだけ消してメタデータは残す
 uv run python strip.py input.pdf --dry-run       # 対象ページ数・命令数の確認のみ
 ```
 
@@ -111,3 +118,4 @@ uv run pytest
 - `merge.py` / `split.py` は暗号化 PDF を自動では復号しない。`--password` を渡すか、先に `unlock.py` で解除する。
 - AES-128 / AES-256 の暗号化 PDF に対応（`pypdf[crypto]` を導入済み）。
 - `strip.py` はページ直下のテキストだけを対象にする。Form XObject 内の本文や画像は消さない。
+- `strip.py` は標準でメタデータ（`/Info`、`/ID`、`/PieceInfo` など）も削除する。

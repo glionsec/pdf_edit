@@ -5,6 +5,7 @@ from pypdf.generic import (
     DictionaryObject,
     NameObject,
     NumberObject,
+    TextStringObject,
 )
 
 import strip
@@ -21,6 +22,9 @@ def build_pdf(path, with_outline=False):
     form[NameObject("/Subtype")] = NameObject("/Form")
     form[NameObject("/BBox")] = ArrayObject(
         [NumberObject(0), NumberObject(0), NumberObject(300), NumberObject(300)]
+    )
+    form[NameObject("/PieceInfo")] = DictionaryObject(
+        {NameObject("/LastModified"): TextStringObject("D:20260101000000Z")}
     )
 
     font = DictionaryObject(
@@ -48,6 +52,11 @@ def build_pdf(path, with_outline=False):
 
     if with_outline:
         writer.add_outline_item("Chapter 1", 0)
+
+    writer.add_metadata(
+        {"/Author": "Alice", "/Title": "Secret Title", "/Hash": "HASHVALUE"}
+    )
+    writer.generate_file_identifiers()
 
     with open(path, "wb") as output:
         writer.write(output)
@@ -99,3 +108,31 @@ def test_strip_rejects_same_path(tmp_path):
     source = build_pdf(tmp_path / "in.pdf")
 
     assert strip.main([str(source), str(source)]) == 1
+
+
+def test_strip_scrubs_metadata_by_default(tmp_path):
+    source = build_pdf(tmp_path / "in.pdf")
+    output = tmp_path / "out.pdf"
+
+    assert strip.main([str(source), str(output)]) == 0
+
+    reader = PdfReader(output)
+    assert not reader.metadata
+    raw = output.read_bytes()
+    for pattern in (b"/PieceInfo", b"/LastModified", b"HASHVALUE", b"Secret Title"):
+        assert pattern not in raw
+    ids = reader.trailer.get("/ID")
+    source_ids = PdfReader(source).trailer.get("/ID")
+    assert ids is not None and len(ids) == 2
+    assert str(ids[0]) != str(source_ids[0])
+
+
+def test_strip_keep_metadata_flag(tmp_path):
+    source = build_pdf(tmp_path / "in.pdf")
+    output = tmp_path / "out.pdf"
+
+    assert strip.main([str(source), str(output), "--keep-metadata"]) == 0
+
+    reader = PdfReader(output)
+    assert reader.metadata and reader.metadata.get("/Author") == "Alice"
+    assert b"/PieceInfo" in output.read_bytes()

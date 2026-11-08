@@ -691,3 +691,12 @@ def test_explicit_offset_failure_is_error():
     reader = _StubReader(texts, labels=["x"] * 12)
     with pytest.raises(ExtractError):
         summarize.detect_chapters(reader, texts, {"offset": 999})
+
+
+def test_fragment_comments_are_rejected(tmp_path):
+    out_dir = _make_out_dir(
+        tmp_path,
+        fragments={0: VALID_FRAGMENT, 1: VALID_FRAGMENT + "<!-- 未完了", 2: VALID_FRAGMENT},
+    )
+    problems = summarize.check(str(out_dir))
+    assert any("コメント" in p for p in problems)

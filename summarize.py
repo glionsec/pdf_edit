@@ -599,6 +599,9 @@ class _FragmentParser(HTMLParser):
     def handle_data(self, data):
         self.text.append(data)
 
+    def handle_comment(self, data):
+        self.problems.append("HTML コメントが含まれています")
+
 
 def _strip_tags(html):
     parser = _FragmentParser()

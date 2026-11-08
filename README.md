@@ -81,6 +81,31 @@ uv run python strip.py input.pdf --dry-run       # 対象ページ数・命令�
 
 Remove overlay text (watermark / header / footer) drawn directly on the page.
 
+# summarize
+
+PDF の内容を章単位で要約した **単一 HTML（図解付き）** を作る。要約文の生成は LLM/エージェントが行い、
+このスクリプトは「章の検出・本文抽出」と「HTML への結合」を担当する。
+出力は外部 CSS・画像・スクリプトを参照しない（図解はインライン SVG）。
+
+```
+uv run python summarize.py extract "work/book.pdf"          # 章検出と本文抽出
+uv run python summarize.py assemble work/summary/<PDF名>/   # -> <PDF名>_summary.html
+```
+
+`extract` の出力:
+
+```
+work/summary/<PDF名>/
+├── manifest.json     # ページ数・章一覧（ページ範囲・文字数）
+├── chapters/         # 章ごとの本文テキスト
+├── summaries/        # 章ごとの要約 HTML 断片（NN.html。LLM/エージェントが作成）
+└── diagrams/         # インライン SVG 図解（overview-*.svg, ch-NN.svg）
+```
+
+- 章検出は「目次ページ」→「アウトラインの Exercise」→「10 ページ固定」の順にフォールバックする
+- 図解は `diagrams/` の SVG をそのまま埋め込む（`overview-*.svg` は全体像、`ch-NN.svg` は該当章）
+- 要約文は LLM 生成のため非決定的。抽出と結合は決定的でテスト対象
+
 # 実 PDF の作業用ディレクトリ
 
 実データの PDF は `work/` に置く（`.gitkeep` 以外は gitignore 済みでコミットされない）。

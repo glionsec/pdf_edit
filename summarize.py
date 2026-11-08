@@ -631,7 +631,18 @@ def validate_fragment(html, label):
     return problems
 
 
-SVG_STYLE_UNSAFE = re.compile(r"@import|url\s*\(|https?:|//|javascript:|expression\s*\(", re.I)
+SVG_STYLE_UNSAFE = re.compile(r"@import|https?:|//|javascript:|expression\s*\(", re.I)
+SVG_STYLE_URL = re.compile(r"url\s*\(\s*([^)]*)\)", re.I)
+
+
+def _svg_style_unsafe(text):
+    """外部参照・危険な CSS を検出する。url(#id) の内部参照は許可する。"""
+    if SVG_STYLE_UNSAFE.search(text):
+        return True
+    for match in SVG_STYLE_URL.finditer(text):
+        if not match.group(1).strip().startswith("#"):
+            return True
+    return False
 ALLOWED_SVG_HREF = re.compile(r"#[A-Za-z0-9_-]+")
 ALLOWED_SVG_DATA = re.compile(r"data:image/(png|jpeg);base64,[A-Za-z0-9+/=]+")
 
@@ -648,14 +659,14 @@ def validate_svg(svg, label):
             problems.append(f"{label}: SVG に <{tag}> が含まれています")
         if tag == "style":
             text = "".join(element.itertext())
-            if SVG_STYLE_UNSAFE.search(text):
+            if _svg_style_unsafe(text):
                 problems.append(f"{label}: SVG の <style> に外部参照・url() が含まれています")
         for name, value in element.attrib.items():
             key = name.split("}")[-1].split(":")[-1].lower()
             text = str(value).strip()
             if key.startswith("on"):
                 problems.append(f"{label}: SVG にイベントハンドラ {key} が含まれています")
-            elif key == "style" and SVG_STYLE_UNSAFE.search(text):
+            elif key == "style" and _svg_style_unsafe(text):
                 problems.append(f"{label}: SVG の style 属性に url() 等が含まれています")
             elif key in ("href", "src"):
                 if not (ALLOWED_SVG_HREF.fullmatch(text) or ALLOWED_SVG_DATA.fullmatch(text)):
@@ -1044,9 +1055,11 @@ class _FinalHTMLParser(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.problems = []
+        self.stack = []
 
     def handle_starttag(self, tag, attrs):
         tag = tag.lower()
+        inside_svg = "svg" in self.stack
         if tag in FORBIDDEN_HTML_TAGS:
             self.problems.append(f"禁止タグが含まれています: <{tag}>")
         for name, value in attrs:
@@ -1055,13 +1068,25 @@ class _FinalHTMLParser(HTMLParser):
             if key.startswith("on"):
                 self.problems.append(f"イベント属性が含まれています: {key}")
             elif key == "style":
-                self.problems.append("style 属性が含まれています")
+                # SVG 内の style 属性は validate_svg が検証する
+                if not inside_svg:
+                    self.problems.append("style 属性が含まれています")
             elif key == "src" and not ALLOWED_IMG_SRC.fullmatch(text):
                 self.problems.append("src が data:image(png/jpeg) ではありません")
             elif key in ("href", "xlink:href") and not ALLOWED_ANCHOR.fullmatch(text):
                 self.problems.append(f"href が内部アンカーではありません: {text[:40]}")
             elif key in ("action", "formaction", "poster", "background", "srcset"):
                 self.problems.append(f"危険な属性が含まれています: {key}")
+        if tag not in VOID_TAGS:
+            self.stack.append(tag)
+
+    def handle_endtag(self, tag):
+        tag = tag.lower()
+        if self.stack and self.stack[-1] == tag:
+            self.stack.pop()
+        elif tag in self.stack:
+            while self.stack and self.stack.pop() != tag:
+                pass
 
     def handle_comment(self, data):
         self.problems.append("HTML コメントが含まれています")

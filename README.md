@@ -126,9 +126,10 @@ work/summary/<PDF名>/
 - `figures` は Form XObject の中も含めて画像を探し、サイズ・縦横比・テンプレート部品（同寸法の多用）・
   同一画像の使い回しで装飾を除外する。章あたり 2 枚・合計 5MB を上限に選抜（`--per-chapter` / `--max-total-mb`）
 - JPEG はそのまま、FlateDecode の RGB/グレースケールは PNG に変換して抽出する
-- `assemble` は `figures.json` があれば **base64 の data URI で HTML に埋め込む**（単一 HTML を維持）。
-  画像以外の data URI は拒否する
-- 図の内容理解（OCR・画像の意味解析）は行わない。画像内の文字は抽出されない
+- `assemble` は既定で図版を**埋め込まない**（`--embed-figures` 指定時のみ base64 の data URI で埋め込む）
+- 図の内容を要約に反映する場合は、図ごとの説明を `figures/descriptions.json`
+  （`{"figures/ch-03-p036-03.jpg": "…"}`）に置く。`prompt` が章ごとの図版説明として指示文に含める
+- この説明を作るには画像を理解できるモデル（vision）か OCR が必要。本文テキストからのみでは図の内容は分からない
 - 要約文は LLM 生成のため非決定的。抽出・検証・結合は決定的でテスト対象
 
 # 実 PDF の作業用ディレクトリ

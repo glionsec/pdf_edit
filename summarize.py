@@ -723,10 +723,24 @@ PROMPT_TEMPLATE = """# 章要約の作成指示
 LANGUAGE_LABELS = {"ja": "日本語", "en": "English"}
 
 
+def load_figure_descriptions(out_dir):
+    """figures/descriptions.json: {ファイル名: 図の説明} を読む（任意）。"""
+    path = os.path.join(out_dir, "figures", "descriptions.json")
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else {}
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {}
+
+
 def write_prompt(out_dir, language="ja"):
     language = LANGUAGE_LABELS.get(language, language)
     manifest = load_manifest(out_dir)
     figures_data = figures_module.load_figures(out_dir) or {}
+    descriptions = load_figure_descriptions(out_dir)
     figure_pages = {}
     for entry in figures_data.get("figures", []):
         figure_pages.setdefault(entry.get("chapter"), []).append(entry.get("page"))
@@ -735,7 +749,19 @@ def write_prompt(out_dir, language="ja"):
     output_lines = []
     for chapter in manifest["chapters"]:
         pages = figure_pages.get(chapter["index"], [])
-        figure_note = f" / 図版 {len(pages)} 枚（p.{', '.join(map(str, pages))}）" if pages else ""
+        chapter_entries = [
+            e for e in figures_data.get("figures", []) if e.get("chapter") == chapter["index"]
+        ]
+        figure_note = ""
+        if chapter_entries:
+            notes = []
+            for entry in chapter_entries:
+                description = descriptions.get(entry["file"], "").strip()
+                if description:
+                    notes.append(f"p.{entry['page']}: {description[:200]}")
+                else:
+                    notes.append(f"p.{entry['page']}: （説明なし。図の内容は不明）")
+            figure_note = " / 図版 " + "; ".join(notes)
         chapter_lines.append(
             f"- {chapter['index']:02d}: {chapter.get('file', '(file 未設定)')} "
             f"（p.{chapter['start']}-{chapter['end']}, "
@@ -850,7 +876,7 @@ def _display_title(source):
     return re.sub(r"[\x00-\x1f/\\]", "_", title).strip() or "summary"
 
 
-def assemble(out_dir):
+def assemble(out_dir, embed_figures=False):
     problems = check(out_dir)
     if problems:
         raise ExtractError("要約の検証に失敗しました:\n- " + "\n- ".join(problems))
@@ -866,7 +892,7 @@ def assemble(out_dir):
             fragments[chapter["index"]] = handle.read().strip()
 
     figures_by_chapter = {}
-    figures_data = figures_module.load_figures(out_dir) or {}
+    figures_data = figures_module.load_figures(out_dir) or {} if embed_figures else {}
     for entry in figures_data.get("figures", []):
         path = os.path.join(out_dir, str(entry.get("file", "")))
         if not os.path.isfile(path):
@@ -1002,6 +1028,9 @@ def main(argv=None):
 
     assemble_parser = sub.add_parser("assemble", help="単一 HTML に結合")
     assemble_parser.add_argument("dir", help="extract の出力ディレクトリ")
+    assemble_parser.add_argument(
+        "--embed-figures", action="store_true", help="抽出した図版を HTML に埋め込む（既定は埋め込まない）"
+    )
 
     args = parser.parse_args(argv)
 
@@ -1062,7 +1091,7 @@ def main(argv=None):
                 return 1
             print("検証 OK")
         else:
-            output = assemble(args.dir)
+            output = assemble(args.dir, embed_figures=args.embed_figures)
             print(f"要約 HTML を書き出しました: {output}")
     except ExtractError as exc:
         print(f"エラー: {exc}")

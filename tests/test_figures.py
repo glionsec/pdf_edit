@@ -182,7 +182,7 @@ def test_extract_and_assemble_with_figures(tmp_path):
     import summarize
 
     assert summarize.check(str(out_dir)) == []
-    output = summarize.assemble(str(out_dir))
+    output = summarize.assemble(str(out_dir), embed_figures=True)
     html = open(output, encoding="utf-8").read()
     assert "data:image/png;base64," in html
     assert "https://" not in html

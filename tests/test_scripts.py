@@ -86,7 +86,7 @@ def test_split_rejects_encrypted_without_password(tmp_path, capsys):
 
 def test_unlock_decrypts_aes(tmp_path):
     pdf = make_encrypted_pdf(tmp_path / "enc.pdf")
-    output = tmp_path / "enc_ja.pdf"
+    output = tmp_path / "enc_decrypted.pdf"
 
     assert unlock.main([str(pdf), "--password", "secret", "--force"]) == 0
     reader = PdfReader(output)
@@ -96,7 +96,7 @@ def test_unlock_decrypts_aes(tmp_path):
 
 def test_unlock_preserves_outline_and_pages(tmp_path):
     pdf = make_encrypted_pdf(tmp_path / "enc_outline.pdf", outline=True)
-    output = tmp_path / "enc_outline_ja.pdf"
+    output = tmp_path / "enc_outline_decrypted.pdf"
 
     assert unlock.main([str(pdf), "--password", "secret", "--force"]) == 0
     reader = PdfReader(output)
@@ -110,7 +110,7 @@ def test_unlock_reports_wrong_password(tmp_path, capsys):
 
     assert unlock.main([str(pdf), "--password", "wrong", "--force"]) == 1
     assert "パスワードが違います" in capsys.readouterr().out
-    assert not (tmp_path / "enc_ja.pdf").exists()
+    assert not (tmp_path / "enc_decrypted.pdf").exists()
 
 
 def test_unlock_does_not_prompt_for_unencrypted(tmp_path, monkeypatch):
@@ -122,12 +122,12 @@ def test_unlock_does_not_prompt_for_unencrypted(tmp_path, monkeypatch):
     monkeypatch.setattr("builtins.input", fail_input)
 
     assert unlock.main([str(pdf), "--force"]) == 0
-    assert (tmp_path / "plain_ja.pdf").exists()
+    assert (tmp_path / "plain_decrypted.pdf").exists()
 
 
 def test_unlock_does_not_overwrite_without_confirmation(tmp_path, monkeypatch):
     pdf = make_pdf(tmp_path / "plain.pdf", pages=1)
-    output = tmp_path / "plain_ja.pdf"
+    output = tmp_path / "plain_decrypted.pdf"
     output.write_bytes(b"keep")
 
     monkeypatch.setattr("builtins.input", lambda *args: "n")

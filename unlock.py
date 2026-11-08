@@ -4,6 +4,8 @@ import sys
 
 from pypdf import PasswordType, PdfReader, PdfWriter
 
+OUTPUT_SUFFIX = "_decrypted"
+
 
 def unlock_pdfs(files=None, password=None, force=False):
     if files is None:
@@ -25,7 +27,7 @@ def unlock_pdfs(files=None, password=None, force=False):
                     failures += 1
                     continue
 
-            output_file = os.path.splitext(pdf_file)[0] + "_ja.pdf"
+            output_file = os.path.splitext(pdf_file)[0] + OUTPUT_SUFFIX + ".pdf"
             if os.path.exists(output_file) and not force:
                 answer = input(
                     f"{output_file} は既に存在します。上書きしますか？ [y/N]: "

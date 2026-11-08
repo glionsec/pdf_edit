@@ -84,27 +84,43 @@ Remove overlay text (watermark / header / footer) drawn directly on the page.
 # summarize
 
 PDF の内容を章単位で要約した **単一 HTML（図解付き）** を作る。要約文の生成は LLM/エージェントが行い、
-このスクリプトは「章の検出・本文抽出」と「HTML への結合」を担当する。
+スクリプトは「章検出・本文抽出」「指示文の生成」「書式検証」「HTML 結合」を担当する。
 出力は外部 CSS・画像・スクリプトを参照しない（図解はインライン SVG）。
 
 ```
-uv run python summarize.py extract "work/book.pdf"          # 章検出と本文抽出
-uv run python summarize.py assemble work/summary/<PDF名>/   # -> <PDF名>_summary.html
+uv run python summarize.py extract "work/book.pdf"                 # 章検出 + 本文抽出
+uv run python summarize.py prompt work/summary/<PDF名>/            # LLM への指示文 PROMPT.md
+uv run python summarize.py check  work/summary/<PDF名>/            # 書式・安全性の検証
+uv run python summarize.py assemble work/summary/<PDF名>/          # -> <PDF名>_summary.html
 ```
 
-`extract` の出力:
+章検出は次の順に試し、`manifest.json` に方式と確信度を記録する。
+
+1. `--chapters` の手動指定（ページ範囲の配列）
+2. 目次 + `/PageLabels`（印刷ページ番号をラベルで解決）
+3. 目次 + オフセット自動推定（ページ端の番号表記から。SANS Books はこれ）
+4. しおり（既定は上位 30 件まで。`--profile sans` は Exercise のみ）
+5. 番号付き見出し（`1. Introduction` など）
+6. 10 ページ固定（警告を出してフォールバック）
+
+主なオプション: `--chapters chapters.json` / `--toc-pages 1,2` / `--offset N` / `--profile sans` /
+`--dry-run` / `--force`（cwd・ホーム・git リポジトリ・PDF を含むディレクトリは削除しない）。
 
 ```
 work/summary/<PDF名>/
-├── manifest.json     # ページ数・章一覧（ページ範囲・文字数）
+├── manifest.json     # ページ数・方式・確信度・章一覧（範囲・文字数・前付けフラグ）
+├── PROMPT.md         # LLM への指示文（章一覧と出力先つき）
 ├── chapters/         # 章ごとの本文テキスト
 ├── summaries/        # 章ごとの要約 HTML 断片（NN.html。LLM/エージェントが作成）
-└── diagrams/         # インライン SVG 図解（overview-*.svg, ch-NN.svg）
+├── diagrams/         # インライン SVG 図解（overview-*.svg, ch-NN.svg）
+└── <名前>_summary.html
 ```
 
-- 章検出は「目次ページ」→「アウトラインの Exercise」→「10 ページ固定」の順にフォールバックする
-- 図解は `diagrams/` の SVG をそのまま埋め込む（`overview-*.svg` は全体像、`ch-NN.svg` は該当章）
-- 要約文は LLM 生成のため非決定的。抽出と結合は決定的でテスト対象
+- `check` は許可タグ・`p.lead`・`li` 数・可視文字数・タグの対応・外部参照・イベント属性・
+  SVG の危険要素（script / image / on* / 外部 URL）を検証する
+- `assemble` は検証を通らない断片を拒否し、生成した HTML に対しても script / on* / 外部参照を再検査する
+- テキストを抽出できない PDF（スキャン画像）はエラーになる。OCR 済みの PDF か `--chapters` を使う
+- 要約文は LLM 生成のため非決定的。抽出・検証・結合は決定的でテスト対象
 
 # 実 PDF の作業用ディレクトリ
 

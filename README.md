@@ -1,6 +1,6 @@
 # pdf_edit
 
-PDF のパスワード解除・分割・結合・圧縮を行うスクリプト集。
+PDF のパスワード解除・分割・結合・圧縮・透かし除去を行うスクリプト集。
 
 # unlock
 
@@ -57,6 +57,23 @@ docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/data" pdf-edit-compress inp
 
 Compress a PDF with ghostscript.
 
+# strip
+
+ページ直下に描かれたテキスト（透かし・ヘッダー・フッター・ライセンス表記）を除去する。
+本文が Form XObject の内側にあり、ページの content stream に重ね文字だけが描かれている PDF 向け
+（SANS 教材など）。テキスト描画命令（`Tj` / `TJ` / `'` / `"`）だけを落とし、
+画像・図形・本文はそのまま残す。
+
+```
+uv run python strip.py input.pdf                 # -> input_stripped.pdf
+uv run python strip.py input.pdf output.pdf
+uv run python strip.py input.pdf --dry-run       # 対象ページ数・命令数の確認のみ
+```
+
+本文のテキストがページ直下に描かれている PDF では本文も消える。適用前に `--dry-run` で確認すること。
+
+Remove overlay text (watermark / header / footer) drawn directly on the page.
+
 # 実 PDF の作業用ディレクトリ
 
 実データの PDF は `work/` に置く（`.gitkeep` 以外は gitignore 済みでコミットされない）。
@@ -93,3 +110,4 @@ uv run pytest
 
 - `merge.py` / `split.py` は暗号化 PDF を自動では復号しない。`--password` を渡すか、先に `unlock.py` で解除する。
 - AES-128 / AES-256 の暗号化 PDF に対応（`pypdf[crypto]` を導入済み）。
+- `strip.py` はページ直下のテキストだけを対象にする。Form XObject 内の本文や画像は消さない。

@@ -1,7 +1,7 @@
 [project]
 name = "pdf-edit"
 version = "0.1.0"
-description = "PDF のパスワード解除・分割・結合・圧縮を行うスクリプト集"
+description = "PDF のパスワード解除・分割・結合・圧縮・透かし除去を行うスクリプト集"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

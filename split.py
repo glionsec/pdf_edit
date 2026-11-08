@@ -1,8 +1,8 @@
-import PyPDF2
+from pypdf import PdfReader, PdfWriter
 import os
 
 def split_pdf(file_path, split_points):
-    pdf_reader = PyPDF2.PdfReader(file_path)
+    pdf_reader = PdfReader(file_path)
     total_pages = len(pdf_reader.pages)
 
     # Split points should be sorted and unique
@@ -16,7 +16,7 @@ def split_pdf(file_path, split_points):
     directory = os.path.dirname(file_path)
 
     for i in range(len(split_points) - 1):
-        pdf_writer = PyPDF2.PdfWriter()
+        pdf_writer = PdfWriter()
         start = split_points[i]
         end = split_points[i + 1]
 

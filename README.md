@@ -54,4 +54,4 @@ sudo apt install ghostscript
 # notes
 
 - 暗号化された PDF は `unlock.py` で先に解除する（`merge.py` / `split.py` は復号しないため、そのまま渡すとエラーになる）。
-- AES-256 で暗号化された PDF は現行の PyPDF2 では復号できない（`PyCryptodome` が必要）。pypdf への移行で解消する予定。
+- AES-128 / AES-256 の暗号化 PDF に対応（`pypdf[crypto]` を導入済み）。

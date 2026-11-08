@@ -1,5 +1,5 @@
 import os
-from PyPDF2 import PdfReader, PdfWriter
+from pypdf import PdfReader, PdfWriter
 
 # カレントディレクトリ内のPDFファイルをリストアップ
 pdf_files = [file for file in os.listdir() if file.endswith('.pdf')]
@@ -14,7 +14,8 @@ for pdf_file in pdf_files:
     try:
         # パスワードで保護されたPDFを開く
         pdf_reader = PdfReader(pdf_file)
-        pdf_reader.decrypt(password)
+        if pdf_reader.is_encrypted:
+            pdf_reader.decrypt(password)
         
         # 新しいPDFファイルを作成
         output_file = pdf_file[:-4] + '_ja.pdf'  # 末尾に"_ja"を付与

@@ -5,7 +5,7 @@ description = "PDF のパスワード解除・分割・結合・圧縮を行う�
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "PyPDF2==3.0.1",
+    "pypdf[crypto]==7.0.0",
 ]
 
 [tool.uv]
